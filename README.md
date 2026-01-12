@@ -20,12 +20,12 @@ Dieses Skript synchronisiert deine EGYM-Trainingseinheiten automatisch mit deine
 4. Autorisiere die App und kopiere den `code` aus der URL der Folgeseite (z. B. `http://localhost/?state=&code=abc12345...`).
 5. **Initialen Refresh-Token generieren:** Tausche den Code im Terminal gegen den ersten Token-Satz ein:
    ```bash
-   curl -X POST [https://www.strava.com/oauth/token](https://www.strava.com/oauth/token) \
+   curl -X POST https://www.strava.com/oauth/token \
      -F client_id=DEINE_CLIENT_ID \
      -F client_secret=DEIN_CLIENT_SECRET \
      -F code=DEIN_CODE_AUS_DER_URL \
      -F grant_type=authorization_code
-```
+     
 6. Kopiere den `refresh_token` aus der JSON-Antwort für die GitHub Secrets.
 
 ### 2. GitHub Personal Access Token (PAT)
