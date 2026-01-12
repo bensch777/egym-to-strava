@@ -1,0 +1,33 @@
+name: EGYM to Strava Sync
+
+on:
+  schedule:
+    - cron: '0 22 * * *' # Täglich um 22:00 Uhr
+  workflow_dispatch:      # Ermöglicht manuellen Start
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests python-dotenv PyGithub
+
+      - name: Run Sync Script
+        env:
+          EGYM_TENANT: ${{ secrets.EGYM_TENANT }}
+          EGYM_EMAIL: ${{ secrets.EGYM_EMAIL }}
+          EGYM_PASSWORD: ${{ secrets.EGYM_PASSWORD }}
+          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: python main.py
