@@ -2,6 +2,8 @@
 
 Dieses Skript veredelt deine Strava-Krafttrainingseinheiten mit den detaillierten Daten deiner EGYM-Workouts. Es fügt Übungen, Gewichte und Wiederholungen automatisch in die Beschreibung ein, sobald du dein Training beendet hast.
 
+<img width="579" height="308" alt="screenshot" src="https://github.com/user-attachments/assets/310f301f-837b-4011-a5c8-8ec4065747c1" />
+
 ## 💡 Das Prinzip
 Dieses Skript erstellt **keine neuen Aktivitäten**. Stattdessen funktioniert es so:
 1. Du startest wie gewohnt ein **Krafttraining** auf deiner Sportuhr (Apple Watch, Garmin, etc.) oder direkt in der Strava App.
