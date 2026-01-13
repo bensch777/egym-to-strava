@@ -1,12 +1,18 @@
 # 🏋️ EGYM to Strava Sync
 
-Dieses Skript synchronisiert deine EGYM-Trainingseinheiten automatisch mit deinen Strava-Aktivitäten. Es fügt die absolvierten Übungen, Gewichte und Wiederholungen direkt in die Strava-Beschreibung ein und benennt die Aktivität um.
+Dieses Skript veredelt deine Strava-Krafttrainingseinheiten mit den detaillierten Daten deiner EGYM-Workouts. Es fügt Übungen, Gewichte und Wiederholungen automatisch in die Beschreibung ein, sobald du dein Training beendet hast.
+
+## 💡 Das Prinzip
+Dieses Skript erstellt **keine neuen Aktivitäten**. Stattdessen funktioniert es so:
+1. Du startest wie gewohnt ein **Krafttraining** auf deiner Sportuhr (Apple Watch, Garmin, etc.) oder direkt in der Strava App.
+2. Du absolvierst dein EGYM-Training.
+3. Das Skript erkennt die Übereinstimmung (Datum & Typ), benennt die Aktivität in Strava um (z.B. "EGYM Zirkel") und schreibt alle Sätze und Gewichte in die Beschreibung.
 
 ## 🚀 Features
-* **Vollautomatisch:** Läuft über GitHub Actions (z. B. alle 3 Stunden).
-* **Smart Sync:** Erkennt bereits synchronisierte Aktivitäten am Titel ("EGYM") und überspringt diese, um API-Limits zu schonen.
-* **Dateilos:** Keine lokale Speicherung von JSON-Dateien; der Datenaustausch erfolgt direkt zwischen den APIs.
-* **Token-Rotation:** Aktualisiert den Strava Refresh-Token bei Bedarf automatisch in den GitHub Secrets über die GitHub API.
+* **Automatisches Update:** Läuft via GitHub Actions (z.B. alle 3 Stunden).
+* **Smart Detection:** Vergleicht Zeitstempel und verhindert Dopplungen durch Titel-Prüfung.
+* **Vollständige Details:** Schreibt Übungsnamen, Sätze, Wiederholungen und Gewichte in die Strava-Beschreibung.
+* **Cloud-Native:** Keine lokale Installation nötig, nutzt GitHub Secrets für maximale Sicherheit.
 
 ---
 
