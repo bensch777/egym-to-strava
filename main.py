@@ -67,6 +67,16 @@ def get_egym_workouts():
         print(f"❌ EGYM Fehler: {e}")
         return None
 
+TRAINING_METHODS = {'REGULAR_REPBASED': 'Regulär', 'NEGATIVE_REPBASED': 'Negativ'}
+SIDE_PREFIX = {'LEFT': 'L ', 'RIGHT': 'R '}
+
+def format_training_method(methods):
+    """Übersetzt die EGYM-Trainingsmethode(n) eines Workouts in einen lesbaren Namen."""
+    names = []
+    for m in dict.fromkeys(methods):
+        names.append(TRAINING_METHODS.get(m) or m.removesuffix('_REPBASED').replace('_', ' ').title())
+    return " / ".join(names)
+
 def sync_to_strava(workouts, strava_token):
     """Synchronisiert EGYM-Daten zu Strava, falls noch nicht geschehen."""
     if not workouts: return
@@ -79,12 +89,15 @@ def sync_to_strava(workouts, strava_token):
         
         # Übungen aufbereiten
         exercises = []
+        methods = []
         source = workout.get('exercises', []) or []
         if not source:
             for g in workout.get('exerciseGroups', []): source.extend(g.get('exercises', []))
         for ex in source:
             if ex.get('activity', {}).get('category') == "EGYM_MACHINE":
-                details = [f"{s.get('weight')}kg x {s.get('numberOfReps')}" for s in ex.get('sets', []) if s.get('weight')]
+                sets = [s for s in ex.get('sets', []) if s.get('weight')]
+                details = [f"{SIDE_PREFIX.get(s.get('sideMode'), '')}{s.get('weight')}kg x {s.get('numberOfReps')}" for s in sets]
+                methods.extend(s.get('trainingMethod') for s in sets if s.get('trainingMethod'))
                 if details: exercises.append(f"🔹 {ex.get('label', '').replace('EGYM ', '')}: {' | '.join(details)}")
 
         if exercises:
@@ -98,7 +111,8 @@ def sync_to_strava(workouts, strava_token):
                     
                     # Update durchführen
                     count = len(exercises)
-                    title = f"🏋️ EGYM Zirkel ({count} Übungen)" if count >= 12 else f"💪 EGYM Krafttraining ({count} Übungen)"
+                    method = f" · {format_training_method(methods)}" if methods else ""
+                    title = f"🏋️ EGYM Zirkel{method} ({count} Übungen)" if count >= 12 else f"💪 EGYM Krafttraining{method} ({count} Übungen)"
                     requests.put(f"https://www.strava.com/api/v3/activities/{s_act['id']}", 
                                  headers=headers, json={"name": title, "description": "\n".join(exercises)})
                     print(f"✅ {s_date}: Strava Titel und Beschreibung aktualisiert.")
