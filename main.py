@@ -231,15 +231,25 @@ def redact(value, key=''):
     return value
 
 def dump_egym_sample(workouts):
-    """Gibt im Testlauf die Struktur des neuesten EGYM-Workouts aus."""
-    own = [w for w in workouts if isinstance(w, dict) and w.get('source') != 'GARMIN']
-    print(f"🧪 EGYM lieferte {len(workouts)} Workouts, davon {len(own)} ohne Garmin-Quelle.")
-    if not own:
+    """Gibt im Testlauf die Struktur des neuesten EGYM-Geräte-Workouts aus."""
+    machine = [w for w in workouts if isinstance(w, dict) and collect_exercises(w)]
+    print(f"🧪 EGYM lieferte {len(workouts)} Workouts, davon {len(machine)} mit EGYM-Geräten.")
+    if not machine:
         return
-    latest = max(own, key=lambda w: w.get('completedAt') or '')
-    labels = sorted({name for w in own for name, _ in collect_exercises(w)})
-    print(f"🧪 Alle EGYM-Gerätenamen: {labels}")
-    print(f"🧪 Neuestes Workout (IDs entfernt):\n{json.dumps(redact(latest), indent=2, ensure_ascii=False)}")
+    devices = {}
+    for w in machine:
+        for ex in w.get('exercises') or []:
+            act = ex.get('activity') or {}
+            if act.get('category') == "EGYM_MACHINE":
+                types = [c.get('egymMachineType') for combo in (act.get('equipmentsV2Combinations') or {}).values() for c in combo]
+                devices[ex.get('label')] = {"machineType": types, "muscles": act.get('muscleMapping'),
+                                            "en": (act.get('name') or {}).get('en')}
+    print(f"🧪 EGYM-Geräte:\n{json.dumps(devices, indent=1, ensure_ascii=False)}")
+    latest = max(machine, key=lambda w: w.get('completedAt') or '')
+    slim = dict(latest)
+    slim['exercises'] = [{**ex, 'activity': {'category': (ex.get('activity') or {}).get('category')}}
+                         for ex in latest.get('exercises') or []]
+    print(f"🧪 Neuestes Geräte-Workout (IDs entfernt):\n{json.dumps(redact(slim), indent=1, ensure_ascii=False)}")
 
 def get_strava_activities(headers):
     """Lädt alle Strava-Aktivitäten im Sync-Zeitraum."""

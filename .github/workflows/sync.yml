@@ -9,6 +9,10 @@ on:
         description: 'Testlauf: nur anzeigen, nichts in Strava schreiben'
         type: boolean
         default: false
+      lookback_days:
+        description: 'Wie viele Tage zurück synchronisiert wird (Standard: 7)'
+        type: string
+        default: ''
 
 jobs:
   sync:
@@ -28,6 +32,7 @@ jobs:
       - name: Run Sync
         env:
           DRY_RUN: ${{ inputs.dry_run }}
+          LOOKBACK_DAYS: ${{ inputs.lookback_days }}
           GH_PAT: ${{ secrets.GH_PAT }}
           EGYM_TENANT: ${{ secrets.EGYM_TENANT }}
           EGYM_EMAIL: ${{ secrets.EGYM_EMAIL }}
