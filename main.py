@@ -27,7 +27,7 @@ LOCAL_TZ = ZoneInfo(os.getenv('TIMEZONE') or 'Europe/Berlin')
 LOOKBACK_DAYS = int(os.getenv('LOOKBACK_DAYS') or 7)
 # DRY_RUN=1: nichts schreiben, stattdessen ausgeben, was passieren würde
 DRY_RUN = (os.getenv('DRY_RUN') or '').lower() in ('1', 'true', 'yes')
-# Geschätzte Dauer pro Satz, falls EGYM keine Workout-Dauer liefert
+# Angenommene Dauer pro Satz, falls EGYM keine Satzdauer liefert
 SECONDS_PER_SET = 75
 
 STRAVA_API = "https://www.strava.com/api/v3"
@@ -74,6 +74,7 @@ EXERCISE_MAP = [
     ("hip thrust", "MACHINE_HIP_THRUST"),
     ("seitbeuger", "SIDE_BEND"),
     ("lateral flexion", "SIDE_BEND"),
+    ("rotator", "CORE_GENERIC"),
     ("rotation", "CORE_GENERIC"),
     ("rotary", "CORE_GENERIC"),
     ("kniebeuge", "SQUAT_GENERIC"),
@@ -128,7 +129,7 @@ def get_egym_workouts():
         w_headers = {"Authorization": f"Bearer {token_res['accessToken']}", "X-Exerciser-Id": login['uuid'], "User-Agent": "egym/10.36.0"}
         params = {
             "completedAfter": "2025-12-01T00:00:00Z",
-            "completedBefore": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+            "completedBefore": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
             "gymLocationId": login['homeClubUuid'],
             "measurementSystem": "METRIC", "locale": "de-DE"
         }
@@ -138,8 +139,8 @@ def get_egym_workouts():
         print(f"❌ EGYM Fehler: {e}")
         return None
 
-def parse_time(value):
-    """Parst einen ISO-Zeitstempel von EGYM; ohne Zeitzone wird UTC angenommen."""
+def parse_time(value, tz=None):
+    """Parst einen EGYM-Zeitstempel. EGYM liefert Ortszeit ohne Zeitzonenangabe."""
     if not value:
         return None
     text = re.sub(r'\.\d+', '', str(value).strip()).replace('Z', '+00:00')
@@ -147,7 +148,14 @@ def parse_time(value):
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=tz or LOCAL_TZ)
+
+def workout_tz(workout):
+    """Zeitzone des Workouts laut EGYM, sonst die konfigurierte."""
+    try:
+        return ZoneInfo(workout.get('timezone') or '')
+    except Exception:
+        return LOCAL_TZ
 
 def map_exercise(label):
     """Ordnet einen EGYM-Gerätenamen einem Strava exercise_type zu (oder None)."""
@@ -158,7 +166,8 @@ def map_exercise(label):
     return None
 
 def collect_exercises(workout):
-    """Liefert die EGYM-Geräteübungen eines Workouts als (Name, Sätze)."""
+    """Liefert die EGYM-Geräteübungen eines Workouts in zeitlicher Reihenfolge."""
+    tz = workout_tz(workout)
     source = list(workout.get('exercises') or [])
     if not source:
         for group in workout.get('exerciseGroups') or []:
@@ -169,7 +178,14 @@ def collect_exercises(workout):
             continue
         sets = [s for s in ex.get('sets') or [] if s.get('weight')]
         if sets:
-            result.append(((ex.get('label') or '').replace('EGYM ', '').strip(), sets))
+            result.append({
+                "name": (ex.get('label') or '').replace('EGYM ', '').strip(),
+                "sets": sets,
+                "completed": parse_time(ex.get('completedAt'), tz),
+                "calories": ex.get('kiloCalories') or 0,
+            })
+    if all(ex["completed"] for ex in result):
+        result.sort(key=lambda ex: ex["completed"])
     return result
 
 def build_title(count):
@@ -177,79 +193,70 @@ def build_title(count):
 
 def build_description(exercises):
     return "\n".join(
-        f"🔹 {name}: " + " | ".join(f"{s.get('weight')}kg x {s.get('numberOfReps')}" for s in sets)
-        for name, sets in exercises
+        f"🔹 {ex['name']}: " + " | ".join(f"{s.get('weight')}kg x {s.get('numberOfReps')}" for s in ex['sets'])
+        for ex in exercises
     )
 
-def build_strava_json(workout, exercises, completed):
+def utc_iso(moment):
+    return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+def build_strava_json(exercises, completed):
     """Baut die Strava-Strength-JSON-Datei. Gibt (payload, nicht zugeordnete Übungen) zurück."""
-    sets, unmapped = [], []
-    for name, ex_sets in exercises:
-        exercise_type = map_exercise(name)
+    sets, unmapped, starts = [], [], []
+    for ex in exercises:
+        # Satzbeginn rückwärts aus Endzeit der Übung und Satzdauer berechnen
+        set_starts, end = [], ex["completed"]
+        for s in reversed(ex["sets"]):
+            end = end - timedelta(seconds=s.get('duration') or SECONDS_PER_SET) if end else None
+            set_starts.insert(0, end)
+        if set_starts[0]:
+            starts.append(set_starts[0])
+        exercise_type = map_exercise(ex["name"])
         if not exercise_type:
-            unmapped.append(name)
+            unmapped.append(ex["name"])
             continue
-        for s in ex_sets:
+        for s, set_start in zip(ex["sets"], set_starts):
             entry = {"exercise_type": exercise_type, "weight": float(s['weight'])}
             if s.get('numberOfReps'):
                 entry["repetitions"] = int(s['numberOfReps'])
+            if set_start:
+                entry["start_time"] = utc_iso(set_start)
             sets.append(entry)
     if not sets:
         return None, unmapped
 
-    # Startzeit: von EGYM, falls vorhanden – sonst aus der Satzanzahl geschätzt
-    started = None
-    for key in ('startedAt', 'startTime', 'createdAt'):
-        started = parse_time(workout.get(key))
-        if started:
-            break
-    if started and timedelta(minutes=1) <= completed - started <= timedelta(hours=4):
-        elapsed = int((completed - started).total_seconds())
-    else:
-        elapsed = max(60, sum(len(ex_sets) for _, ex_sets in exercises) * SECONDS_PER_SET)
-        started = completed - timedelta(seconds=elapsed)
-        print(f"ℹ️ Keine Workout-Dauer von EGYM, geschätzt: {elapsed // 60} min.")
-
+    set_count = sum(len(ex["sets"]) for ex in exercises)
+    started = min(starts) if starts else completed - timedelta(seconds=set_count * SECONDS_PER_SET)
     payload = {
         "version": "1.0",
-        "start_time": started.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-        "utc_offset": int(started.astimezone(LOCAL_TZ).utcoffset().total_seconds()),
-        "elapsed_time": elapsed,
+        "start_time": utc_iso(started),
+        "utc_offset": int(started.utcoffset().total_seconds()),
+        "elapsed_time": max(60, int((completed - started).total_seconds())),
         "creator": {"name": "EGYM"},
         "sets": sets,
     }
+    active = sum(s.get('duration') or 0 for ex in exercises for s in ex["sets"])
+    if active:
+        payload["active_time"] = min(int(active), payload["elapsed_time"])
+    calories = sum(ex["calories"] for ex in exercises)
+    if calories:
+        payload["total_calories"] = int(round(calories))
     return payload, unmapped
 
-def redact(value, key=''):
-    """Ersetzt IDs in EGYM-Daten, damit sie nicht im (öffentlichen) Log landen."""
-    if isinstance(value, dict):
-        return {k: redact(v, k) for k, v in value.items()}
-    if isinstance(value, list):
-        return [redact(v, key) for v in value]
-    if re.search(r'id$|uuid|email|name$', key, re.I) and key != 'label':
-        return '<entfernt>'
-    return value
-
-def dump_egym_sample(workouts):
-    """Gibt im Testlauf die Struktur des neuesten EGYM-Geräte-Workouts aus."""
-    machine = [w for w in workouts if isinstance(w, dict) and collect_exercises(w)]
-    print(f"🧪 EGYM lieferte {len(workouts)} Workouts, davon {len(machine)} mit EGYM-Geräten.")
-    if not machine:
-        return
+def dump_egym_devices(workouts):
+    """Gibt im Testlauf alle EGYM-Geräte mit ihrer Strava-Zuordnung aus."""
     devices = {}
-    for w in machine:
+    for w in workouts:
+        if not isinstance(w, dict):
+            continue
         for ex in w.get('exercises') or []:
             act = ex.get('activity') or {}
             if act.get('category') == "EGYM_MACHINE":
-                types = [c.get('egymMachineType') for combo in (act.get('equipmentsV2Combinations') or {}).values() for c in combo]
-                devices[ex.get('label')] = {"machineType": types, "muscles": act.get('muscleMapping'),
-                                            "en": (act.get('name') or {}).get('en')}
-    print(f"🧪 EGYM-Geräte:\n{json.dumps(devices, indent=1, ensure_ascii=False)}")
-    latest = max(machine, key=lambda w: w.get('completedAt') or '')
-    slim = dict(latest)
-    slim['exercises'] = [{**ex, 'activity': {'category': (ex.get('activity') or {}).get('category')}}
-                         for ex in latest.get('exercises') or []]
-    print(f"🧪 Neuestes Geräte-Workout (IDs entfernt):\n{json.dumps(redact(slim), indent=1, ensure_ascii=False)}")
+                name = (ex.get('label') or '').replace('EGYM ', '').strip()
+                devices[name] = (map_exercise(name), (act.get('name') or {}).get('en'), act.get('muscleMapping'))
+    print(f"🧪 EGYM lieferte {len(workouts)} Workouts mit {len(devices)} verschiedenen Geräten:")
+    for name, (exercise_type, english, muscles) in sorted(devices.items()):
+        print(f"   {name} -> {exercise_type} (EGYM: {english}, Muskeln: {json.dumps(muscles, ensure_ascii=False)})")
 
 def get_strava_activities(headers):
     """Lädt alle Strava-Aktivitäten im Sync-Zeitraum."""
@@ -296,21 +303,23 @@ def sync_to_strava(workouts, strava_token):
     mit strukturierten Sätzen hochgeladen.
     """
     if not workouts: return
-    if DRY_RUN: dump_egym_sample(workouts)
+    if DRY_RUN: dump_egym_devices(workouts)
     headers = {"Authorization": f"Bearer {strava_token}"}
     strava_acts = get_strava_activities(headers)
     cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
 
     for workout in workouts:
-        if workout.get('source') == 'GARMIN': continue
-        completed = parse_time(workout.get('completedAt'))
-        if not completed or completed < cutoff: continue
-        date_str = completed.astimezone(LOCAL_TZ).strftime('%Y-%m-%d')
-
         exercises = collect_exercises(workout)
         if not exercises: continue
+        completed = parse_time(workout.get('completedAt'), workout_tz(workout))
+        if not completed or completed < cutoff: continue
+        date_str = completed.strftime('%Y-%m-%d')
+
         title = build_title(len(exercises))
         description = build_description(exercises)
+        payload, unmapped = build_strava_json(exercises, completed)
+        if DRY_RUN:
+            print(f"🧪 {date_str}: {title}\n{json.dumps(payload, indent=1, ensure_ascii=False)}")
 
         same_day = [a for a in strava_acts
                     if a['start_date_local'].split('T')[0] == date_str and a['type'] == 'WeightTraining']
@@ -321,7 +330,7 @@ def sync_to_strava(workouts, strava_token):
         # Fallback: vorhandene Aktivität (z.B. von der Uhr) nur umbenennen und beschreiben
         if same_day:
             if DRY_RUN:
-                print(f"🧪 {date_str}: Würde Aktivität {same_day[0]['id']} aktualisieren: {title}\n{description}")
+                print(f"🧪 {date_str}: Würde Aktivität {same_day[0]['id']} umbenennen und beschreiben.")
                 continue
             res = requests.put(f"{STRAVA_API}/activities/{same_day[0]['id']}",
                                headers=headers, json={"name": title, "description": description})
@@ -332,19 +341,16 @@ def sync_to_strava(workouts, strava_token):
             continue
 
         # Kein Krafttraining an dem Tag: als neue Aktivität mit Sätzen hochladen
-        payload, unmapped = build_strava_json(workout, exercises, completed)
         if unmapped:
             print(f"⚠️ {date_str}: Kein Strava-Übungstyp für {', '.join(unmapped)} "
                   f"(nur in der Beschreibung, bitte EXERCISE_MAP ergänzen).")
         if not payload:
             print(f"❌ {date_str}: Keine Übung zuordenbar, Upload übersprungen.")
             continue
-        external_id = f"egym-{workout.get('id') or completed.strftime('%Y%m%dT%H%M%S')}"
         if DRY_RUN:
-            print(f"🧪 {date_str}: Würde hochladen: {title}\n"
-                  f"Workout-Felder von EGYM: {sorted(workout.keys())}\n"
-                  f"{json.dumps(payload, indent=2, ensure_ascii=False)}")
+            print(f"🧪 {date_str}: Würde als neue Aktivität hochladen.")
             continue
+        external_id = f"egym-{completed.strftime('%Y%m%dT%H%M%S')}"
         activity_id = upload_to_strava(payload, title, description, external_id, headers)
         if activity_id:
             print(f"✅ {date_str}: Neue Strava-Aktivität mit {len(payload['sets'])} Sätzen angelegt "

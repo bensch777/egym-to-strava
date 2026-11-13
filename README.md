@@ -20,7 +20,7 @@ Pro EGYM-Workout prüft das Skript, ob es am selben Tag schon ein **Krafttrainin
 
 ## ⚠️ Gut zu wissen
 * **Reihenfolge:** Lädt deine Uhr das Training erst nach dem Sync zu Strava hoch, entstehen zwei Aktivitäten. Der Sync läuft deshalb erst am nächsten Morgen.
-* **Dauer:** Liefert EGYM keine Start- und Endzeit, wird die Dauer aus der Satzanzahl geschätzt.
+* **Zeiten und Kalorien:** Start, Dauer und Kalorien werden aus den EGYM-Daten der einzelnen Geräte berechnet. Pulsdaten liefert EGYM nicht.
 * **Übungs-Mapping:** Strava kennt nur eine feste Liste von Übungen. Die Zuordnung der EGYM-Geräte steht in `EXERCISE_MAP` in `main.py`. Nicht zugeordnete Geräte erscheinen nur in der Beschreibung und werden im Log gemeldet.
 * **Zeitraum:** Es werden nur Workouts der letzten 7 Tage synchronisiert (`LOOKBACK_DAYS`). Die Zeitzone lässt sich über `TIMEZONE` setzen (Standard: `Europe/Berlin`).
 
