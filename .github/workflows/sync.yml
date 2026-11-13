@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 8 * * *'
   workflow_dispatch:      # Manueller Start möglich
+    inputs:
+      dry_run:
+        description: 'Testlauf: nur anzeigen, nichts in Strava schreiben'
+        type: boolean
+        default: false
 
 jobs:
   sync:
@@ -22,6 +27,7 @@ jobs:
 
       - name: Run Sync
         env:
+          DRY_RUN: ${{ inputs.dry_run }}
           GH_PAT: ${{ secrets.GH_PAT }}
           EGYM_TENANT: ${{ secrets.EGYM_TENANT }}
           EGYM_EMAIL: ${{ secrets.EGYM_EMAIL }}
