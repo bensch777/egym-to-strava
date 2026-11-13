@@ -15,8 +15,18 @@ Pro EGYM-Workout prüft das Skript, ob es am selben Tag schon ein **Krafttrainin
 * **Automatischer Sync:** Läuft täglich via GitHub Actions.
 * **Strukturierte Sätze:** Neue Aktivitäten enthalten echte Satzdaten statt nur Text.
 * **Keine Dopplungen:** Vorhandene Uhr-Aktivitäten werden ergänzt statt dupliziert.
+* **Garmin-Export:** Für jedes neu hochgeladene Workout entsteht eine FIT-Datei mit Sätzen und Pausen zum Import in Garmin Connect.
 * **Testlauf:** Der Workflow lässt sich manuell mit `dry_run` starten und zeigt dann nur an, was er tun würde.
 * **Cloud-Native:** Keine lokale Installation nötig, nutzt GitHub Secrets für maximale Sicherheit.
+
+## ⌚ Training in Garmin Connect importieren
+Garmin bietet keine offizielle Upload-Schnittstelle, der Import läuft deshalb von Hand:
+
+1. Öffne in GitHub unter **Actions** den letzten Lauf von "EGYM to Strava Sync".
+2. Lade unten unter **Artifacts** die Datei `garmin-fit` herunter und entpacke sie.
+3. Importiere die `.fit`-Datei in [Garmin Connect](https://connect.garmin.com/modern/import-data) über "Daten importieren".
+
+Die Dateien bleiben 30 Tage abrufbar. Ein Testlauf mit `dry_run` erzeugt die FIT-Dateien für alle Workouts im Zeitraum erneut. Die Zuordnung der Geräte zu Garmins Übungsliste steht in `GARMIN_MAP` in `main.py`.
 
 ## ⚠️ Gut zu wissen
 * **Reihenfolge:** Lädt deine Uhr das Training erst nach dem Sync zu Strava hoch, entstehen zwei Aktivitäten. Der Sync läuft deshalb erst am nächsten Morgen.
