@@ -1,20 +1,28 @@
 # 🏋️ EGYM to Strava Sync
 
-Dieses Skript veredelt deine Strava-Krafttrainingseinheiten mit den detaillierten Daten deiner EGYM-Workouts. Es fügt Übungen, Gewichte und Wiederholungen automatisch in die Beschreibung ein, sobald du dein Training beendet hast.
+Dieses Skript bringt deine EGYM-Workouts nach Strava. Hast du das Training schon mit der Uhr aufgezeichnet, ergänzt es Übungen, Gewichte und Wiederholungen in der Beschreibung. Gibt es noch keine Aktivität, lädt es das Workout als echtes Krafttraining mit strukturierten Sätzen hoch.
 
 <img width="579" height="308" alt="screenshot" src="https://github.com/user-attachments/assets/310f301f-837b-4011-a5c8-8ec4065747c1" />
 
 ## 💡 Das Prinzip
-Dieses Skript erstellt **keine neuen Aktivitäten**. Stattdessen funktioniert es so:
-1. Du startest wie gewohnt ein **Krafttraining** auf deiner Sportuhr (Apple Watch, Garmin, etc.) oder direkt in der Strava App.
-2. Du absolvierst dein EGYM-Training.
-3. Das Skript erkennt die Übereinstimmung (Datum & Typ), benennt die Aktivität in Strava um (z.B. "EGYM Zirkel") und schreibt alle Sätze und Gewichte in die Beschreibung.
+Pro EGYM-Workout prüft das Skript, ob es am selben Tag schon ein **Krafttraining** in Strava gibt:
+
+1. **Aktivität vorhanden** (z.B. von Apple Watch oder Garmin): Die Aktivität wird umbenannt (z.B. "EGYM Zirkel") und alle Sätze und Gewichte landen in der Beschreibung. Puls und Kalorien der Uhr bleiben erhalten.
+2. **Keine Aktivität vorhanden:** Das Workout wird über Stravas [JSON-Format für Krafttraining](https://developers.strava.com/docs/uploads/) als neue Aktivität hochgeladen. Strava zeigt dann Übungen, Sätze, Wiederholungen und Gewichte strukturiert an.
+3. **Bereits synchronisiert** ("EGYM" im Titel): Es passiert nichts.
 
 ## 🚀 Features
-* **Automatisches Update:** Läuft via GitHub Actions (z.B. alle 3 Stunden).
-* **Smart Detection:** Vergleicht Zeitstempel und verhindert Dopplungen durch Titel-Prüfung.
-* **Vollständige Details:** Schreibt Übungsnamen, Sätze, Wiederholungen und Gewichte in die Strava-Beschreibung.
+* **Automatischer Sync:** Läuft täglich via GitHub Actions.
+* **Strukturierte Sätze:** Neue Aktivitäten enthalten echte Satzdaten statt nur Text.
+* **Keine Dopplungen:** Vorhandene Uhr-Aktivitäten werden ergänzt statt dupliziert.
+* **Testlauf:** Der Workflow lässt sich manuell mit `dry_run` starten und zeigt dann nur an, was er tun würde.
 * **Cloud-Native:** Keine lokale Installation nötig, nutzt GitHub Secrets für maximale Sicherheit.
+
+## ⚠️ Gut zu wissen
+* **Reihenfolge:** Lädt deine Uhr das Training erst nach dem Sync zu Strava hoch, entstehen zwei Aktivitäten. Der Sync läuft deshalb erst am nächsten Morgen.
+* **Zeiten und Kalorien:** Start, Dauer und Kalorien werden aus den EGYM-Daten der einzelnen Geräte berechnet. Pulsdaten liefert EGYM nicht.
+* **Übungs-Mapping:** Strava kennt nur eine feste Liste von Übungen. Die Zuordnung der EGYM-Geräte steht in `EXERCISE_MAP` in `main.py`. Nicht zugeordnete Geräte erscheinen nur in der Beschreibung und werden im Log gemeldet.
+* **Zeitraum:** Es werden nur Workouts der letzten 7 Tage synchronisiert (`LOOKBACK_DAYS`). Die Zeitzone lässt sich über `TIMEZONE` setzen (Standard: `Europe/Berlin`).
 
 ---
 
@@ -67,5 +75,5 @@ Gehe in deinem Repository zu **Settings -> Secrets and variables -> Actions** un
 ## 🔄 Funktionsweise
 1. **Authentifizierung:** Das Skript nutzt den `STRAVA_REFRESH_TOKEN`, um einen kurzlebigen Access-Token zu generieren.
 2. **EGYM-Daten:** Loggt sich bei EGYM ein, identifiziert automatisch die `club_uuid` und lädt die Workouts der letzten Wochen.
-3. **Abgleich:** Lädt die letzten Aktivitäten von Strava. Wenn ein "WeightTraining" am selben Tag gefunden wird, das noch **nicht** "EGYM" im Titel hat, wird es aktualisiert.
+3. **Abgleich:** Lädt die Strava-Aktivitäten der letzten Tage. Ein "WeightTraining" am selben Tag ohne "EGYM" im Titel wird aktualisiert. Gibt es keines, wird das Workout als JSON-Datei hochgeladen.
 4. **Persistenz:** Falls Strava einen neuen Refresh-Token ausgibt, wird dieser automatisch via GitHub API in den Repository-Secrets gespeichert.
