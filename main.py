@@ -220,6 +220,27 @@ def build_strava_json(workout, exercises, completed):
     }
     return payload, unmapped
 
+def redact(value, key=''):
+    """Ersetzt IDs in EGYM-Daten, damit sie nicht im (öffentlichen) Log landen."""
+    if isinstance(value, dict):
+        return {k: redact(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact(v, key) for v in value]
+    if re.search(r'id$|uuid|email|name$', key, re.I) and key != 'label':
+        return '<entfernt>'
+    return value
+
+def dump_egym_sample(workouts):
+    """Gibt im Testlauf die Struktur des neuesten EGYM-Workouts aus."""
+    own = [w for w in workouts if isinstance(w, dict) and w.get('source') != 'GARMIN']
+    print(f"🧪 EGYM lieferte {len(workouts)} Workouts, davon {len(own)} ohne Garmin-Quelle.")
+    if not own:
+        return
+    latest = max(own, key=lambda w: w.get('completedAt') or '')
+    labels = sorted({name for w in own for name, _ in collect_exercises(w)})
+    print(f"🧪 Alle EGYM-Gerätenamen: {labels}")
+    print(f"🧪 Neuestes Workout (IDs entfernt):\n{json.dumps(redact(latest), indent=2, ensure_ascii=False)}")
+
 def get_strava_activities(headers):
     """Lädt alle Strava-Aktivitäten im Sync-Zeitraum."""
     after = int((datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS + 1)).timestamp())
@@ -265,6 +286,7 @@ def sync_to_strava(workouts, strava_token):
     mit strukturierten Sätzen hochgeladen.
     """
     if not workouts: return
+    if DRY_RUN: dump_egym_sample(workouts)
     headers = {"Authorization": f"Bearer {strava_token}"}
     strava_acts = get_strava_activities(headers)
     cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
