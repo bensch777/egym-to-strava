@@ -27,7 +27,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install Dependencies
-        run: pip install requests python-dotenv PyGithub
+        run: pip install -r requirements.txt
 
       - name: Run Sync
         env:
@@ -41,3 +41,12 @@ jobs:
           STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
           STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
         run: python main.py
+
+      - name: FIT-Dateien für Garmin Connect bereitstellen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: garmin-fit
+          path: fit_export/*.fit
+          if-no-files-found: ignore
+          retention-days: 30

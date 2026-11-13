@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from github import Github
+from garmin_fit_sdk import Encoder, Profile
 
 # Umgebungsvariablen laden
 load_dotenv()
@@ -29,6 +30,9 @@ LOOKBACK_DAYS = int(os.getenv('LOOKBACK_DAYS') or 7)
 DRY_RUN = (os.getenv('DRY_RUN') or '').lower() in ('1', 'true', 'yes')
 # Angenommene Dauer pro Satz, falls EGYM keine Satzdauer liefert
 SECONDS_PER_SET = 75
+
+# Ordner für FIT-Dateien zum manuellen Import in Garmin Connect
+FIT_DIR = os.getenv('FIT_DIR') or 'fit_export'
 
 STRAVA_API = "https://www.strava.com/api/v3"
 
@@ -139,6 +143,28 @@ def get_egym_workouts():
         print(f"❌ EGYM Fehler: {e}")
         return None
 
+# Strava exercise_type -> Garmin (Kategorie, Übung) aus dem FIT-Profil.
+# Garmin kennt kaum Maschinen, daher jeweils die nächstliegende Übung.
+# Übung None: nur die Kategorie wird gesetzt.
+GARMIN_MAP = {
+    "MACHINE_LEG_PRESS": ("squat", "leg_press"),
+    "MACHINE_LEG_CURL_SEATED": ("leg_curl", "leg_curl"),
+    "MACHINE_LEG_EXTENSION": ("crunch", "leg_extensions"),
+    "MACHINE_SEATED_ROW": ("row", "seated_cable_row"),
+    "MACHINE_HIP_THRUST": ("hip_raise", "barbell_hip_thrust_with_bench"),
+    "LAT_PULLDOWN": ("pull_up", "lat_pulldown"),
+    "MACHINE_BICEP_CURL": ("curl", "cable_biceps_curl"),
+    "MACHINE_SEATED_SHOULDER_PRESS": ("shoulder_press", "smith_machine_overhead_press"),
+    "MACHINE_CHEST_PRESS": ("bench_press", "smith_machine_bench_press"),
+    "MACHINE_BACK_EXTENSION": ("hyperextension", "weighted_static_back_extension"),
+    "AB_CRUNCH_MACHINE": ("crunch", "weighted_crunch"),
+    "MACHINE_HIP_ABDUCTION": ("hip_stability", "weighted_standing_hip_abduction"),
+    "MACHINE_HIP_ADDUCTION": ("hip_stability", "weighted_standing_adduction"),
+    "PEC_DECK_BUTTERFLY": ("flye", "cable_crossover"),
+    "MACHINE_REAR_DELT_REVERSE_FLY": ("flye", "incline_reverse_flye"),
+    "CORE_GENERIC": ("core", None),
+}
+
 def parse_time(value, tz=None):
     """Parst einen EGYM-Zeitstempel. EGYM liefert Ortszeit ohne Zeitzonenangabe."""
     if not value:
@@ -200,33 +226,46 @@ def build_description(exercises):
 def utc_iso(moment):
     return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
+def timed_sets(exercises):
+    """Liefert je Satz (Übung, Satz, Beginn, Dauer); Beginn rückwärts aus Endzeit und Satzdauer."""
+    result = []
+    for ex in exercises:
+        rows, end = [], ex["completed"]
+        for s in reversed(ex["sets"]):
+            duration = s.get('duration') or SECONDS_PER_SET
+            end = end - timedelta(seconds=duration) if end else None
+            rows.insert(0, (ex, s, end, duration))
+        result.extend(rows)
+    return result
+
+def workout_start(exercises, completed):
+    starts = [start for _, _, start, _ in timed_sets(exercises) if start]
+    if starts:
+        return min(starts)
+    return completed - timedelta(seconds=sum(len(ex["sets"]) for ex in exercises) * SECONDS_PER_SET)
+
+def total_calories(exercises):
+    return int(round(sum(ex["calories"] for ex in exercises)))
+
 def build_strava_json(exercises, completed):
     """Baut die Strava-Strength-JSON-Datei. Gibt (payload, nicht zugeordnete Übungen) zurück."""
-    sets, unmapped, starts = [], [], []
-    for ex in exercises:
-        # Satzbeginn rückwärts aus Endzeit der Übung und Satzdauer berechnen
-        set_starts, end = [], ex["completed"]
-        for s in reversed(ex["sets"]):
-            end = end - timedelta(seconds=s.get('duration') or SECONDS_PER_SET) if end else None
-            set_starts.insert(0, end)
-        if set_starts[0]:
-            starts.append(set_starts[0])
+    sets, unmapped = [], []
+    for ex, s, set_start, _ in timed_sets(exercises):
         exercise_type = map_exercise(ex["name"])
         if not exercise_type:
-            unmapped.append(ex["name"])
+            if ex["name"] not in unmapped:
+                unmapped.append(ex["name"])
             continue
-        for s, set_start in zip(ex["sets"], set_starts):
-            entry = {"exercise_type": exercise_type, "weight": float(s['weight'])}
-            if s.get('numberOfReps'):
-                entry["repetitions"] = int(s['numberOfReps'])
-            if set_start:
-                entry["start_time"] = utc_iso(set_start)
-            sets.append(entry)
+        entry = {"exercise_type": exercise_type, "weight": float(s['weight'])}
+        if s.get('numberOfReps'):
+            entry["repetitions"] = int(s['numberOfReps'])
+        if set_start:
+            entry["start_time"] = utc_iso(set_start)
+        sets.append(entry)
     if not sets:
         return None, unmapped
 
-    set_count = sum(len(ex["sets"]) for ex in exercises)
-    started = min(starts) if starts else completed - timedelta(seconds=set_count * SECONDS_PER_SET)
+    started = workout_start(exercises, completed)
     payload = {
         "version": "1.0",
         "start_time": utc_iso(started),
@@ -238,10 +277,71 @@ def build_strava_json(exercises, completed):
     active = sum(s.get('duration') or 0 for ex in exercises for s in ex["sets"])
     if active:
         payload["active_time"] = min(int(active), payload["elapsed_time"])
-    calories = sum(ex["calories"] for ex in exercises)
-    if calories:
-        payload["total_calories"] = int(round(calories))
+    if total_calories(exercises):
+        payload["total_calories"] = total_calories(exercises)
     return payload, unmapped
+
+def garmin_exercise(name):
+    """Garmin-Kategorie und -Übung (als FIT-Profilwerte) für einen EGYM-Gerätenamen."""
+    types = Profile['types']
+    category, exercise = GARMIN_MAP.get(map_exercise(name), ("unknown", None))
+    category_id = {v: k for k, v in types['exercise_category'].items()}[category]
+    if not exercise:
+        return category_id, None
+    return category_id, {v: k for k, v in types[f'{category}_exercise_name'].items()}[exercise]
+
+def build_fit(exercises, completed):
+    """Baut eine FIT-Aktivitätsdatei (Krafttraining mit Sätzen und Pausen) für Garmin Connect."""
+    num = Profile['mesg_num']
+    started = workout_start(exercises, completed)
+    elapsed = max(60, int((completed - started).total_seconds()))
+    encoder = Encoder()
+    encoder.on_mesg(num['FILE_ID'], {'type': 'activity', 'manufacturer': 'development', 'product': 0,
+                                     'serial_number': int(started.timestamp()) % 2**32, 'time_created': started})
+    encoder.on_mesg(num['EVENT'], {'timestamp': started, 'event': 'timer', 'event_type': 'start'})
+    index, previous_end = 0, started
+    for ex, s, set_start, duration in timed_sets(exercises):
+        set_start = set_start or previous_end
+        if set_start > previous_end:  # Pause zwischen zwei Sätzen
+            encoder.on_mesg(num['SET'], {'timestamp': set_start, 'start_time': previous_end, 'set_type': 'rest',
+                                         'duration': (set_start - previous_end).total_seconds(),
+                                         'message_index': index})
+            index += 1
+        category, exercise = garmin_exercise(ex["name"])
+        mesg = {'timestamp': set_start + timedelta(seconds=duration), 'start_time': set_start,
+                'set_type': 'active', 'duration': duration, 'weight': float(s['weight']),
+                'weight_display_unit': 'kilogram', 'category': [category], 'message_index': index}
+        if exercise is not None:
+            mesg['category_subtype'] = [exercise]
+        if s.get('numberOfReps'):
+            mesg['repetitions'] = int(s['numberOfReps'])
+        encoder.on_mesg(num['SET'], mesg)
+        index += 1
+        previous_end = mesg['timestamp']
+    encoder.on_mesg(num['EVENT'], {'timestamp': completed, 'event': 'timer', 'event_type': 'stop_all'})
+    summary = {'timestamp': completed, 'start_time': started, 'total_elapsed_time': elapsed,
+               'total_timer_time': elapsed, 'total_calories': total_calories(exercises),
+               'sport': 'training', 'sub_sport': 'strength_training', 'message_index': 0}
+    encoder.on_mesg(num['LAP'], {**summary, 'event': 'lap', 'event_type': 'stop'})
+    encoder.on_mesg(num['SESSION'], {**summary, 'event': 'session', 'event_type': 'stop',
+                                     'first_lap_index': 0, 'num_laps': 1, 'trigger': 'activity_end'})
+    fit_epoch = datetime(1989, 12, 31, tzinfo=timezone.utc)
+    encoder.on_mesg(num['ACTIVITY'], {
+        'timestamp': completed, 'total_timer_time': elapsed, 'num_sessions': 1, 'type': 'manual',
+        'event': 'activity', 'event_type': 'stop',
+        'local_timestamp': int((completed - fit_epoch).total_seconds() + completed.utcoffset().total_seconds())})
+    return encoder.close()
+
+def write_fit(exercises, completed, date_str):
+    """Legt die FIT-Datei zum manuellen Import in Garmin Connect ab."""
+    try:
+        os.makedirs(FIT_DIR, exist_ok=True)
+        path = os.path.join(FIT_DIR, f"egym-{completed.strftime('%Y%m%dT%H%M%S')}.fit")
+        with open(path, 'wb') as handle:
+            handle.write(build_fit(exercises, completed))
+        print(f"📁 {date_str}: FIT-Datei für Garmin Connect erstellt: {path}")
+    except Exception as e:
+        print(f"❌ {date_str}: FIT-Datei konnte nicht erstellt werden: {e}")
 
 def dump_egym_devices(workouts):
     """Gibt im Testlauf alle EGYM-Geräte mit ihrer Strava-Zuordnung aus."""
@@ -320,6 +420,7 @@ def sync_to_strava(workouts, strava_token):
         payload, unmapped = build_strava_json(exercises, completed)
         if DRY_RUN:
             print(f"🧪 {date_str}: {title}\n{json.dumps(payload, indent=1, ensure_ascii=False)}")
+            write_fit(exercises, completed, date_str)
 
         same_day = [a for a in strava_acts
                     if a['start_date_local'].split('T')[0] == date_str and a['type'] == 'WeightTraining']
@@ -352,6 +453,7 @@ def sync_to_strava(workouts, strava_token):
             continue
         external_id = f"egym-{completed.strftime('%Y%m%dT%H%M%S')}"
         activity_id = upload_to_strava(payload, title, description, external_id, headers)
+        write_fit(exercises, completed, date_str)
         if activity_id:
             print(f"✅ {date_str}: Neue Strava-Aktivität mit {len(payload['sets'])} Sätzen angelegt "
                   f"(https://www.strava.com/activities/{activity_id}).")
