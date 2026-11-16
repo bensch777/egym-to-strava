@@ -31,6 +31,8 @@ Die Dateien bleiben 30 Tage abrufbar. Ein Testlauf mit `dry_run` erzeugt die FIT
 ## ⚠️ Gut zu wissen
 * **Reihenfolge:** Lädt deine Uhr das Training erst nach dem Sync zu Strava hoch, entstehen zwei Aktivitäten. Der Sync läuft deshalb erst am nächsten Morgen.
 * **Zeiten und Kalorien:** Start, Dauer und Kalorien werden aus den EGYM-Daten der einzelnen Geräte berechnet. Pulsdaten liefert EGYM nicht.
+* **Beschreibung:** Die Sätze stehen im Format `Leg Press: 2 x 15 x 59 kg` in der Beschreibung. Aus diesem Format kann Strava die Sätze einer Uhr-Aktivität übernehmen.
+* **Mehrere Runden:** EGYM liefert pro Gerät nur die Zeit des ersten Satzes. Bei mehreren Runden durch den Zirkel werden die Zeiten der weiteren Runden geschätzt, indem der Ablauf der ersten Runde wiederholt wird.
 * **Übungs-Mapping:** Strava kennt nur eine feste Liste von Übungen. Die Zuordnung der EGYM-Geräte steht in `EXERCISE_MAP` in `main.py`. Nicht zugeordnete Geräte erscheinen nur in der Beschreibung und werden im Log gemeldet.
 * **Zeitraum:** Es werden nur Workouts der letzten 7 Tage synchronisiert (`LOOKBACK_DAYS`). Die Zeitzone lässt sich über `TIMEZONE` setzen (Standard: `Europe/Berlin`).
 

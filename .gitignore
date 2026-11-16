@@ -208,3 +208,6 @@ __marimo__/
 
 # FIT-Export für Garmin Connect
 fit_export/
+
+# EGYM-Rohdaten aus dem Testlauf
+egym_raw/
