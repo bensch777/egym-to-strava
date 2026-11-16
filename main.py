@@ -167,6 +167,29 @@ GARMIN_MAP = {
     "CORE_GENERIC": ("core", None),
 }
 
+# Strava exercise_type -> englischer Name für die Beschreibung.
+# Strava erkennt Zeilen wie "Leg Press: 2 x 15 x 59 kg" und übernimmt sie als Sätze.
+DESCRIPTION_NAMES = {
+    "MACHINE_LEG_PRESS": "Leg Press",
+    "MACHINE_LEG_CURL_SEATED": "Seated Leg Curl",
+    "MACHINE_LEG_EXTENSION": "Leg Extension",
+    "MACHINE_SEATED_ROW": "Seated Row",
+    "MACHINE_HIP_THRUST": "Hip Thrust",
+    "LAT_PULLDOWN": "Lat Pulldown",
+    "MACHINE_BICEP_CURL": "Bicep Curl",
+    "MACHINE_SEATED_SHOULDER_PRESS": "Shoulder Press",
+    "MACHINE_CHEST_PRESS": "Chest Press",
+    "MACHINE_BACK_EXTENSION": "Back Extension",
+    "AB_CRUNCH_MACHINE": "Ab Crunch Machine",
+    "MACHINE_HIP_ABDUCTION": "Hip Abduction",
+    "MACHINE_HIP_ADDUCTION": "Hip Adduction",
+    "PEC_DECK_BUTTERFLY": "Pec Deck Butterfly",
+    "MACHINE_REAR_DELT_REVERSE_FLY": "Reverse Fly",
+    "MACHINE_TRICEP_EXTENSION": "Tricep Extension",
+    "MACHINE_CALF_PRESS": "Calf Press",
+    "CORE_GENERIC": "Rotary Torso",
+}
+
 def parse_time(value, tz=None):
     """Parst einen EGYM-Zeitstempel. EGYM liefert Ortszeit ohne Zeitzonenangabe."""
     if not value:
@@ -220,10 +243,20 @@ def build_title(count):
     return f"🏋️ EGYM Zirkel ({count} Übungen)" if count >= 12 else f"💪 EGYM Krafttraining ({count} Übungen)"
 
 def build_description(exercises):
-    return "\n".join(
-        f"🔹 {ex['name']}: " + " | ".join(f"{s.get('weight')}kg x {s.get('numberOfReps')}" for s in ex['sets'])
-        for ex in exercises
-    )
+    """Eine Zeile je Übung und Gewicht, z.B. "Leg Press: 2 x 15 x 59 kg"."""
+    lines = []
+    for ex in exercises:
+        name = DESCRIPTION_NAMES.get(map_exercise(ex["name"]), ex["name"])
+        groups = []  # aufeinanderfolgende gleiche Sätze zusammenfassen
+        for s in ex["sets"]:
+            key = (s.get('numberOfReps'), s.get('weight'))
+            if groups and groups[-1][0] == key:
+                groups[-1][1] += 1
+            else:
+                groups.append([key, 1])
+        for (reps, weight), count in groups:
+            lines.append(f"{name}: {count} x {reps} x {weight:g} kg")
+    return "\n".join(lines)
 
 def utc_iso(moment):
     return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
