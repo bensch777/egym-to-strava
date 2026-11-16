@@ -227,22 +227,36 @@ def utc_iso(moment):
     return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def timed_sets(exercises):
-    """Liefert je Satz (Übung, Satz, Beginn, Dauer); Beginn rückwärts aus Endzeit und Satzdauer."""
-    result = []
-    for ex in exercises:
-        rows, end = [], ex["completed"]
-        for s in reversed(ex["sets"]):
-            duration = s.get('duration') or SECONDS_PER_SET
-            end = end - timedelta(seconds=duration) if end else None
-            rows.insert(0, (ex, s, end, duration))
-        result.extend(rows)
+    """Liefert je Satz (Übung, Satz, Beginn, Dauer) in zeitlicher Reihenfolge.
+
+    EGYM liefert pro Gerät nur die Endzeit des ersten Satzes. Weitere Sätze sind
+    weitere Runden durch den Zirkel und haben keinen eigenen Zeitstempel. Ihr Beginn
+    wird geschätzt: Jede Runde läuft wie die erste, verschoben um eine Rundendauer.
+    """
+    def duration(s):
+        return s.get('duration') or SECONDS_PER_SET
+
+    if not exercises or not all(ex["completed"] for ex in exercises):
+        return [(ex, s, None, duration(s)) for ex in exercises for s in ex["sets"]]
+
+    first = [(ex["completed"] - timedelta(seconds=duration(ex["sets"][0])), ex["completed"]) for ex in exercises]
+    order = sorted(first)
+    gaps = sorted((nxt[0] - prev[1]).total_seconds() for prev, nxt in zip(order, order[1:]))
+    gap = max(0, gaps[len(gaps) // 2]) if gaps else SECONDS_PER_SET
+    round_length = timedelta(seconds=(max(end for _, end in first) - order[0][0]).total_seconds() + gap)
+
+    result = [(ex, s, start + round_index * round_length, duration(s))
+              for ex, (start, _) in zip(exercises, first)
+              for round_index, s in enumerate(ex["sets"])]
+    result.sort(key=lambda row: row[2])
     return result
 
-def workout_start(exercises, completed):
-    starts = [start for _, _, start, _ in timed_sets(exercises) if start]
-    if starts:
-        return min(starts)
-    return completed - timedelta(seconds=sum(len(ex["sets"]) for ex in exercises) * SECONDS_PER_SET)
+def workout_span(exercises, completed):
+    """Beginn und Ende des Workouts. Das Ende laut EGYM gilt nur für die erste Runde."""
+    rows = [(start, start + timedelta(seconds=duration)) for _, _, start, duration in timed_sets(exercises) if start]
+    if rows:
+        return min(start for start, _ in rows), max([completed] + [end for _, end in rows])
+    return completed - timedelta(seconds=sum(len(ex["sets"]) for ex in exercises) * SECONDS_PER_SET), completed
 
 def total_calories(exercises):
     return int(round(sum(ex["calories"] for ex in exercises)))
@@ -265,12 +279,12 @@ def build_strava_json(exercises, completed):
     if not sets:
         return None, unmapped
 
-    started = workout_start(exercises, completed)
+    started, ended = workout_span(exercises, completed)
     payload = {
         "version": "1.0",
         "start_time": utc_iso(started),
         "utc_offset": int(started.utcoffset().total_seconds()),
-        "elapsed_time": max(60, int((completed - started).total_seconds())),
+        "elapsed_time": max(60, int((ended - started).total_seconds())),
         "creator": {"name": "EGYM"},
         "sets": sets,
     }
@@ -293,7 +307,7 @@ def garmin_exercise(name):
 def build_fit(exercises, completed):
     """Baut eine FIT-Aktivitätsdatei (Krafttraining mit Sätzen und Pausen) für Garmin Connect."""
     num = Profile['mesg_num']
-    started = workout_start(exercises, completed)
+    started, completed = workout_span(exercises, completed)
     elapsed = max(60, int((completed - started).total_seconds()))
     encoder = Encoder()
     encoder.on_mesg(num['FILE_ID'], {'type': 'activity', 'manufacturer': 'development', 'product': 0,
