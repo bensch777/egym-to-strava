@@ -33,6 +33,8 @@ SECONDS_PER_SET = 75
 
 # Ordner für FIT-Dateien zum manuellen Import in Garmin Connect
 FIT_DIR = os.getenv('FIT_DIR') or 'fit_export'
+# Ordner für EGYM-Rohdaten (nur im Testlauf)
+RAW_DIR = os.getenv('RAW_DIR') or 'egym_raw'
 
 STRAVA_API = "https://www.strava.com/api/v3"
 
@@ -346,6 +348,32 @@ def build_fit(exercises, completed):
         'local_timestamp': int((completed - fit_epoch).total_seconds() + completed.utcoffset().total_seconds())})
     return encoder.close()
 
+def redact(value, key=''):
+    """Entfernt IDs und persönliche Angaben, da Logs und Artefakte öffentlich einsehbar sein können."""
+    if re.search(r'id$|uuid|email|workoutPlanName', key, re.I):
+        return '<entfernt>' if value is not None else None
+    if isinstance(value, dict):
+        return {k: redact(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact(v, key) for v in value]
+    return value
+
+def write_raw(workout, completed, date_str):
+    """Legt im Testlauf die EGYM-Rohdaten eines Workouts ab und gibt eine Kurzfassung aus."""
+    try:
+        data = redact(workout)
+        os.makedirs(RAW_DIR, exist_ok=True)
+        path = os.path.join(RAW_DIR, f"egym-{completed.strftime('%Y%m%dT%H%M%S')}.json")
+        with open(path, 'w', encoding='utf-8') as handle:
+            json.dump(data, handle, indent=1, ensure_ascii=False)
+        # Kurzfassung ohne den Übungskatalog (Texte, Bilder, Muskelzuordnung)
+        slim = dict(data)
+        slim['exercises'] = [{**ex, 'activity': {'category': (ex.get('activity') or {}).get('category')}}
+                             for ex in data.get('exercises') or []]
+        print(f"🧪 {date_str}: EGYM-Rohdaten in {path}, Kurzfassung:\n{json.dumps(slim, ensure_ascii=False)}")
+    except Exception as e:
+        print(f"❌ {date_str}: EGYM-Rohdaten konnten nicht abgelegt werden: {e}")
+
 def write_fit(exercises, completed, date_str):
     """Legt die FIT-Datei zum manuellen Import in Garmin Connect ab."""
     try:
@@ -435,6 +463,7 @@ def sync_to_strava(workouts, strava_token):
         if DRY_RUN:
             print(f"🧪 {date_str}: {title}\n{json.dumps(payload, indent=1, ensure_ascii=False)}")
             write_fit(exercises, completed, date_str)
+            write_raw(workout, completed, date_str)
 
         same_day = [a for a in strava_acts
                     if a['start_date_local'].split('T')[0] == date_str and a['type'] == 'WeightTraining']
